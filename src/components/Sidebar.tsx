@@ -14,6 +14,7 @@ import { OWNER_AVATAR_URL, OWNER_NAME } from '../data/seedData';
 interface SidebarProps {
   activeSection: NavSection;
   onSelectSection: (section: NavSection) => void;
+  apartmentsCount: number;
   pendingPaymentsCount: number;
   expiringDocsCount: number;
   unreadMessagesCount: number;
@@ -25,6 +26,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeSection,
   onSelectSection,
+  apartmentsCount,
   pendingPaymentsCount,
   expiringDocsCount,
   unreadMessagesCount,
@@ -141,7 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {OWNER_NAME}
             </div>
             <div className="text-xs text-slate-500 truncate">
-              Gestionnaire · 2 biens
+              Gestionnaire · {apartmentsCount} {apartmentsCount > 1 ? 'biens' : 'bien'}
             </div>
           </div>
         </div>

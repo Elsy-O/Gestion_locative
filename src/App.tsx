@@ -28,10 +28,12 @@ import { ExpensesView } from './components/ExpensesView';
 import { DocumentsView } from './components/DocumentsView';
 import { MessagesView } from './components/MessagesView';
 import {
-  ApartmentEditModal,
+  ApartmentFormModal,
+  ApartmentFormSubmitPayload,
   DocumentPreviewModal,
   DocumentUploadModal,
   ExpenseModal,
+  getReceiptPrefix,
   QuittanceModal,
   RentPaymentModal,
 } from './components/Modals';
@@ -40,6 +42,7 @@ import {
   getDocumentBlob,
   putDocumentBlob,
 } from './utils/fileStorage';
+import { formatCFA } from './utils/formatters';
 
 const STORAGE_KEY = 'cle_gestion_state_v2';
 
@@ -122,9 +125,10 @@ export default function App() {
     apartmentId?: string;
     file?: File | null;
   }>({ open: false });
-  const [editingApartment, setEditingApartment] = useState<Apartment | null>(
-    null,
-  );
+  const [apartmentModalState, setApartmentModalState] = useState<{
+    open: boolean;
+    editing: Apartment | null;
+  }>({ open: false, editing: null });
   const [quittancePayment, setQuittancePayment] = useState<RentPayment | null>(
     null,
   );
@@ -198,7 +202,8 @@ export default function App() {
     setPayments((prev) =>
       prev.map((p) => {
         if (p.id !== paymentId) return p;
-        const prefix = p.apartmentId === 'apt-plateau' ? 'COC' : 'ALI';
+        const apt = apartments.find((a) => a.id === p.apartmentId);
+        const prefix = getReceiptPrefix(apt?.shortName);
         return {
           ...p,
           status: 'paid',
@@ -333,11 +338,86 @@ export default function App() {
     );
   };
 
-  const handleSaveApartment = (updated: Apartment) => {
-    setApartments((prev) =>
-      prev.map((a) => (a.id === updated.id ? updated : a)),
-    );
-    setEditingApartment(null);
+  const handleSaveApartmentForm = (payload: ApartmentFormSubmitPayload) => {
+    if (payload.existingId) {
+      const updated: Apartment = {
+        ...payload.apartment,
+        id: payload.existingId,
+      };
+      setApartments((prev) =>
+        prev.map((a) => (a.id === updated.id ? updated : a)),
+      );
+    } else {
+      const newId = `apt-${Date.now()}`;
+      const created: Apartment = {
+        ...payload.apartment,
+        id: newId,
+      };
+      setApartments((prev) => [...prev, created]);
+
+      if (payload.createCurrentRent) {
+        const rentPayment: RentPayment = {
+          id: `pay-${Date.now()}`,
+          apartmentId: newId,
+          period: '2026-11',
+          periodLabel: 'Novembre 2026',
+          dueDate: '2026-11-05',
+          rentHC: created.rentHC,
+          chargesProvision: created.chargesProvision,
+          totalAmount: created.rentHC + created.chargesProvision,
+          status: 'pending',
+          paymentMethod: 'Virement',
+        };
+        setPayments((prev) => [rentPayment, ...prev]);
+      }
+
+      if (payload.createWelcomeMessage) {
+        const welcomeMsg: InternalMessage = {
+          id: `msg-${Date.now()}`,
+          apartmentId: newId,
+          sender: 'manager',
+          senderName: OWNER_NAME,
+          topic: 'Général',
+          body: `Bonjour ${created.tenant.fullName}, bienvenue dans votre espace de suivi pour ${created.shortName}. Votre loyer mensuel charges comprises est fixé à ${formatCFA(
+            created.rentHC + created.chargesProvision,
+          )}. N’hésitez pas à utiliser cette messagerie pour vos demandes ou justificatifs.`,
+          sentAt: '2026-11-19T09:00',
+          read: true,
+        };
+        setMessages((prev) => [...prev, welcomeMsg]);
+      }
+
+      setActiveThreadAptId(newId);
+    }
+
+    setApartmentModalState({ open: false, editing: null });
+  };
+
+  const handleDeleteApartment = async (apartmentId: string) => {
+    const docsToDelete = documents.filter((d) => d.apartmentId === apartmentId);
+    for (const d of docsToDelete) {
+      if (d.hasStoredFile) {
+        try {
+          await deleteDocumentBlob(d.id);
+        } catch {
+          // Ignore IndexedDB cleanup error
+        }
+      }
+    }
+
+    const remaining = apartments.filter((a) => a.id !== apartmentId);
+    setApartments(remaining);
+    setPayments((prev) => prev.filter((p) => p.apartmentId !== apartmentId));
+    setExpenses((prev) => prev.filter((e) => e.apartmentId !== apartmentId));
+    setDocuments((prev) => prev.filter((d) => d.apartmentId !== apartmentId));
+    setMessages((prev) => prev.filter((m) => m.apartmentId !== apartmentId));
+
+    if (apartmentFilter === apartmentId) {
+      setApartmentFilter('all');
+    }
+    if (activeThreadAptId === apartmentId) {
+      setActiveThreadAptId(remaining[0]?.id ?? '');
+    }
   };
 
   const handleSendMessage = ({
@@ -402,10 +482,13 @@ export default function App() {
     setDocuments(INITIAL_DOCUMENTS);
     setMessages(INITIAL_MESSAGES);
     setApartmentFilter('all');
+    setActiveThreadAptId(INITIAL_APARTMENTS[0]?.id ?? 'apt-plateau');
   };
 
   const primaryAction = () => {
-    if (activeSection === 'expenses') {
+    if (activeSection === 'apartments') {
+      setApartmentModalState({ open: true, editing: null });
+    } else if (activeSection === 'expenses') {
       setExpenseModalState({ open: true, editing: null });
     } else if (activeSection === 'documents') {
       setUploadModalState({
@@ -415,9 +498,7 @@ export default function App() {
     } else if (activeSection === 'messages') {
       setActiveSection('messages');
       const targetApt =
-        apartmentFilter === 'all'
-          ? activeThreadAptId
-          : apartmentFilter;
+        apartmentFilter === 'all' ? activeThreadAptId : apartmentFilter;
       setActiveThreadAptId(targetApt);
     } else {
       setShowRentModal(true);
@@ -425,19 +506,22 @@ export default function App() {
   };
 
   const primaryActionLabel =
-    activeSection === 'expenses'
-      ? 'Ajouter une charge'
-      : activeSection === 'documents'
-        ? 'Importer un document'
-        : activeSection === 'messages'
-          ? 'Contacter un locataire'
-          : 'Enregistrer un loyer';
+    activeSection === 'apartments'
+      ? 'Ajouter un appartement'
+      : activeSection === 'expenses'
+        ? 'Ajouter une charge'
+        : activeSection === 'documents'
+          ? 'Importer un document'
+          : activeSection === 'messages'
+            ? 'Contacter un locataire'
+            : 'Enregistrer un loyer';
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
       <Sidebar
         activeSection={activeSection}
         onSelectSection={setActiveSection}
+        apartmentsCount={apartments.length}
         pendingPaymentsCount={pendingPaymentsCount}
         expiringDocsCount={expiringDocsCount}
         unreadMessagesCount={unreadMessagesCount}
@@ -471,7 +555,8 @@ export default function App() {
             <button
               type="button"
               onClick={primaryAction}
-              className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors whitespace-nowrap"
+              disabled={apartments.length === 0 && activeSection !== 'apartments'}
+              className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800 disabled:opacity-40 transition-colors whitespace-nowrap"
             >
               <Plus className="h-3.5 w-3.5" />
               <span>{primaryActionLabel}</span>
@@ -545,7 +630,13 @@ export default function App() {
               payments={payments}
               expenses={expenses}
               documents={documents}
-              onEditApartment={setEditingApartment}
+              onAddApartment={() =>
+                setApartmentModalState({ open: true, editing: null })
+              }
+              onEditApartment={(apt) =>
+                setApartmentModalState({ open: true, editing: apt })
+              }
+              onDeleteApartment={handleDeleteApartment}
               onContactTenant={handleContactTenant}
             />
           )}
@@ -616,7 +707,7 @@ export default function App() {
       </div>
 
       {/* Modals */}
-      {showRentModal && (
+      {showRentModal && apartments.length > 0 && (
         <RentPaymentModal
           apartments={apartments}
           defaultApartmentId={
@@ -627,7 +718,7 @@ export default function App() {
         />
       )}
 
-      {expenseModalState.open && (
+      {expenseModalState.open && apartments.length > 0 && (
         <ExpenseModal
           apartments={apartments}
           initialExpense={expenseModalState.editing}
@@ -639,7 +730,7 @@ export default function App() {
         />
       )}
 
-      {uploadModalState.open && (
+      {uploadModalState.open && apartments.length > 0 && (
         <DocumentUploadModal
           apartments={apartments}
           preselectedApartmentId={uploadModalState.apartmentId}
@@ -649,11 +740,13 @@ export default function App() {
         />
       )}
 
-      {editingApartment && (
-        <ApartmentEditModal
-          apartment={editingApartment}
-          onSave={handleSaveApartment}
-          onClose={() => setEditingApartment(null)}
+      {apartmentModalState.open && (
+        <ApartmentFormModal
+          apartment={apartmentModalState.editing}
+          onSave={handleSaveApartmentForm}
+          onClose={() =>
+            setApartmentModalState({ open: false, editing: null })
+          }
         />
       )}
 

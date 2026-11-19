@@ -65,6 +65,15 @@ const ModalShell: React.FC<ModalShellProps> = ({
   </div>
 );
 
+export function getReceiptPrefix(shortName?: string): string {
+  const cleaned = (shortName ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z]/g, '')
+    .toUpperCase();
+  return (cleaned.slice(0, 3) || 'LOC').padEnd(3, 'X');
+}
+
 /* -------------------------------------------------------------------------- */
 /* 1. Rent Payment Modal                                                      */
 /* -------------------------------------------------------------------------- */
@@ -111,7 +120,8 @@ export const RentPaymentModal: React.FC<RentPaymentModalProps> = ({
     const hc = Math.round(Number(rentHC) || 0);
     const ch = Math.round(Number(chargesProvision) || 0);
     const total = hc + ch;
-    const prefix = apartmentId === 'apt-plateau' ? 'COC' : 'ALI';
+    const foundApt = apartments.find((a) => a.id === apartmentId);
+    const prefix = getReceiptPrefix(foundApt?.shortName);
     onSave({
       apartmentId,
       period,
@@ -720,187 +730,396 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
 };
 
 /* -------------------------------------------------------------------------- */
-/* 4. Apartment & Tenant Edit Modal                                           */
+/* 4. Apartment & Tenant Create / Edit Modal                                  */
 /* -------------------------------------------------------------------------- */
 
-interface ApartmentEditModalProps {
-  apartment: Apartment;
-  onSave: (updated: Apartment) => void;
+const PHOTO_PRESETS = [
+  {
+    label: 'Intérieur lumineux classique',
+    url: '/src/assets/images/apt_paris_martyrs_1795084977483.jpg',
+  },
+  {
+    label: 'Séjour contemporain avec balcon',
+    url: '/src/assets/images/apt_lyon_vitton_1795084977359.jpg',
+  },
+];
+
+export interface ApartmentFormSubmitPayload {
+  apartment: Omit<Apartment, 'id'>;
+  existingId?: string;
+  createCurrentRent?: boolean;
+  createWelcomeMessage?: boolean;
+}
+
+interface ApartmentFormModalProps {
+  apartment?: Apartment | null;
+  onSave: (payload: ApartmentFormSubmitPayload) => void;
   onClose: () => void;
 }
 
-export const ApartmentEditModal: React.FC<ApartmentEditModalProps> = ({
+export const ApartmentFormModal: React.FC<ApartmentFormModalProps> = ({
   apartment,
   onSave,
   onClose,
 }) => {
-  const [address, setAddress] = useState(apartment.address);
-  const [postalCity, setPostalCity] = useState(apartment.postalCity);
-  const [rentHC, setRentHC] = useState(String(apartment.rentHC));
+  const isEditing = Boolean(apartment);
+
+  const [shortName, setShortName] = useState(apartment?.shortName ?? '');
+  const [address, setAddress] = useState(apartment?.address ?? '');
+  const [postalCity, setPostalCity] = useState(
+    apartment?.postalCity ?? 'Abidjan',
+  );
+  const [typology, setTypology] = useState(apartment?.typology ?? 'T3');
+  const [surfaceM2, setSurfaceM2] = useState(
+    apartment ? String(apartment.surfaceM2) : '65',
+  );
+  const [floorLabel, setFloorLabel] = useState(
+    apartment?.floorLabel ?? '2e étage',
+  );
+  const [purchasePrice, setPurchasePrice] = useState(
+    apartment ? String(apartment.purchasePrice) : '55000000',
+  );
+  const [photoUrl, setPhotoUrl] = useState(
+    apartment?.photoUrl ?? PHOTO_PRESETS[0].url,
+  );
+
+  const [rentHC, setRentHC] = useState(
+    apartment ? String(apartment.rentHC) : '350000',
+  );
   const [chargesProvision, setChargesProvision] = useState(
-    String(apartment.chargesProvision),
+    apartment ? String(apartment.chargesProvision) : '35000',
   );
-  const [deposit, setDeposit] = useState(String(apartment.deposit));
+  const [deposit, setDeposit] = useState(
+    apartment ? String(apartment.deposit) : '700000',
+  );
   const [leaseType, setLeaseType] = useState<'Meublé' | 'Vide'>(
-    apartment.leaseType,
+    apartment?.leaseType ?? 'Vide',
   );
-  const [leaseStart, setLeaseStart] = useState(apartment.leaseStart);
-  const [leaseEnd, setLeaseEnd] = useState(apartment.leaseEnd);
-  const [tenantName, setTenantName] = useState(apartment.tenant.fullName);
-  const [tenantEmail, setTenantEmail] = useState(apartment.tenant.email);
-  const [tenantPhone, setTenantPhone] = useState(apartment.tenant.phone);
+  const [leaseStart, setLeaseStart] = useState(
+    apartment?.leaseStart ?? '2026-11-01',
+  );
+  const [leaseEnd, setLeaseEnd] = useState(apartment?.leaseEnd ?? '2029-10-31');
+
+  const [tenantName, setTenantName] = useState(
+    apartment?.tenant.fullName ?? '',
+  );
+  const [tenantEmail, setTenantEmail] = useState(apartment?.tenant.email ?? '');
+  const [tenantPhone, setTenantPhone] = useState(apartment?.tenant.phone ?? '');
+  const [moveInDate, setMoveInDate] = useState(
+    apartment?.tenant.moveInDate ?? '2026-11-01',
+  );
   const [guarantorName, setGuarantorName] = useState(
-    apartment.tenant.guarantorName ?? '',
+    apartment?.tenant.guarantorName ?? '',
   );
+
+  const [createCurrentRent, setCreateCurrentRent] = useState(!isEditing);
+  const [createWelcomeMessage, setCreateWelcomeMessage] = useState(!isEditing);
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setPhotoUrl(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanShort = shortName.trim() || address.trim();
     onSave({
-      ...apartment,
-      address: address.trim(),
-      postalCity: postalCity.trim(),
-      rentHC: Math.round(Number(rentHC) || 0),
-      chargesProvision: Math.round(Number(chargesProvision) || 0),
-      deposit: Math.round(Number(deposit) || 0),
-      leaseType,
-      leaseStart,
-      leaseEnd,
-      tenant: {
-        ...apartment.tenant,
-        fullName: tenantName.trim(),
-        email: tenantEmail.trim(),
-        phone: tenantPhone.trim(),
-        guarantorName: guarantorName.trim() || undefined,
+      existingId: apartment?.id,
+      createCurrentRent: !isEditing && createCurrentRent,
+      createWelcomeMessage: !isEditing && createWelcomeMessage,
+      apartment: {
+        name: `Appartement ${cleanShort}`,
+        shortName: cleanShort,
+        address: address.trim(),
+        postalCity: postalCity.trim(),
+        typology: typology.trim() || 'T2',
+        surfaceM2: Math.max(1, Math.round(Number(surfaceM2) || 50)),
+        floorLabel: floorLabel.trim() || 'Rez-de-chaussée',
+        leaseType,
+        leaseStart,
+        leaseEnd,
+        rentHC: Math.round(Number(rentHC) || 0),
+        chargesProvision: Math.round(Number(chargesProvision) || 0),
+        deposit: Math.round(Number(deposit) || 0),
+        purchasePrice: Math.round(Number(purchasePrice) || 0),
+        photoUrl,
+        tenant: {
+          fullName: tenantName.trim(),
+          email: tenantEmail.trim(),
+          phone: tenantPhone.trim(),
+          moveInDate: moveInDate || leaseStart,
+          guarantorName: guarantorName.trim() || undefined,
+        },
       },
     });
   };
 
   return (
     <ModalShell
-      title={`Modifier — ${apartment.shortName}`}
-      subtitle="Paramètres du bien, du bail et du locataire (montants en FCFA)"
+      title={
+        isEditing
+          ? `Modifier — ${apartment?.shortName}`
+          : 'Ajouter un nouvel appartement'
+      }
+      subtitle="Renseignez le bien, les conditions du bail (FCFA) et le locataire en place"
       onClose={onClose}
-      maxWidthClass="max-w-xl"
+      maxWidthClass="max-w-2xl"
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Adresse
-            </label>
-            <input
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
-              required
-            />
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Identification du bien */}
+        <div className="space-y-3">
+          <div className="text-xs font-semibold text-slate-500">
+            01. Caractéristiques du logement
           </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Ville / Commune
-            </label>
-            <input
-              type="text"
-              value={postalCity}
-              onChange={(e) => setPostalCity(e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Loyer HC (FCFA)
-            </label>
-            <input
-              type="number"
-              value={rentHC}
-              onChange={(e) => setRentHC(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Charges (FCFA)
-            </label>
-            <input
-              type="number"
-              value={chargesProvision}
-              onChange={(e) => setChargesProvision(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Dépôt garantie (FCFA)
-            </label>
-            <input
-              type="number"
-              value={deposit}
-              onChange={(e) => setDeposit(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Type de bail
-            </label>
-            <select
-              value={leaseType}
-              onChange={(e) =>
-                setLeaseType(e.target.value as 'Meublé' | 'Vide')
-              }
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
-            >
-              <option value="Meublé">Meublé</option>
-              <option value="Vide">Vide</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Début bail
-            </label>
-            <input
-              type="date"
-              value={leaseStart}
-              onChange={(e) => setLeaseStart(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-700 mb-1">
-              Fin bail
-            </label>
-            <input
-              type="date"
-              value={leaseEnd}
-              onChange={(e) => setLeaseEnd(e.target.value)}
-              className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="pt-2 border-t border-slate-100 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Nom du locataire
+                Nom court du bien
+              </label>
+              <input
+                type="text"
+                value={shortName}
+                onChange={(e) => setShortName(e.target.value)}
+                placeholder="Ex : Résidence Horizon"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Adresse complète
+              </label>
+              <input
+                type="text"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Ex : 25 rue des Jardins, Marcory"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Ville
+              </label>
+              <input
+                type="text"
+                value={postalCity}
+                onChange={(e) => setPostalCity(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Typologie
+              </label>
+              <input
+                type="text"
+                value={typology}
+                onChange={(e) => setTypology(e.target.value)}
+                placeholder="T3, Studio..."
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Surface (m²)
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={surfaceM2}
+                onChange={(e) => setSurfaceM2(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Étage / Détail
+              </label>
+              <input
+                type="text"
+                value={floorLabel}
+                onChange={(e) => setFloorLabel(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Valeur d’acquisition (FCFA)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={purchasePrice}
+                onChange={(e) => setPurchasePrice(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Photo du bien (modèle ou fichier)
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={
+                    PHOTO_PRESETS.some((p) => p.url === photoUrl)
+                      ? photoUrl
+                      : 'custom'
+                  }
+                  onChange={(e) => {
+                    if (e.target.value !== 'custom') {
+                      setPhotoUrl(e.target.value);
+                    }
+                  }}
+                  className="flex-1 px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white"
+                >
+                  {PHOTO_PRESETS.map((p) => (
+                    <option key={p.url} value={p.url}>
+                      {p.label}
+                    </option>
+                  ))}
+                  {!PHOTO_PRESETS.some((p) => p.url === photoUrl) && (
+                    <option value="custom">Photo importée</option>
+                  )}
+                </select>
+                <label className="shrink-0 px-3 py-2 text-xs font-medium border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">
+                  Importer
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoUpload}
+                    className="sr-only"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bail & loyers */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          <div className="text-xs font-semibold text-slate-500">
+            02. Conditions financières &amp; bail
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Loyer HC (FCFA)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={rentHC}
+                onChange={(e) => setRentHC(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Charges (FCFA)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={chargesProvision}
+                onChange={(e) => setChargesProvision(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Dépôt garantie (FCFA)
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={deposit}
+                onChange={(e) => setDeposit(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Type de bail
+              </label>
+              <select
+                value={leaseType}
+                onChange={(e) =>
+                  setLeaseType(e.target.value as 'Meublé' | 'Vide')
+                }
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+              >
+                <option value="Meublé">Meublé</option>
+                <option value="Vide">Vide</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Début bail
+              </label>
+              <input
+                type="date"
+                value={leaseStart}
+                onChange={(e) => setLeaseStart(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Fin bail
+              </label>
+              <input
+                type="date"
+                value={leaseEnd}
+                onChange={(e) => setLeaseEnd(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Locataire */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          <div className="text-xs font-semibold text-slate-500">
+            03. Locataire en place
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Nom complet du locataire
               </label>
               <input
                 type="text"
                 value={tenantName}
                 onChange={(e) => setTenantName(e.target.value)}
+                placeholder="Ex : Awa Koné"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
                 required
               />
@@ -913,13 +1132,14 @@ export const ApartmentEditModal: React.FC<ApartmentEditModalProps> = ({
                 type="text"
                 value={tenantPhone}
                 onChange={(e) => setTenantPhone(e.target.value)}
+                placeholder="+225 07 00 00 00 00"
                 className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
                 required
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
                 Email locataire
@@ -928,7 +1148,20 @@ export const ApartmentEditModal: React.FC<ApartmentEditModalProps> = ({
                 type="email"
                 value={tenantEmail}
                 onChange={(e) => setTenantEmail(e.target.value)}
+                placeholder="locataire@exemple.com"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Date d’entrée
+              </label>
+              <input
+                type="date"
+                value={moveInDate}
+                onChange={(e) => setMoveInDate(e.target.value)}
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg"
                 required
               />
             </div>
@@ -940,26 +1173,62 @@ export const ApartmentEditModal: React.FC<ApartmentEditModalProps> = ({
                 type="text"
                 value={guarantorName}
                 onChange={(e) => setGuarantorName(e.target.value)}
+                placeholder="Optionnel"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg"
               />
             </div>
           </div>
         </div>
 
-        <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-xs font-medium text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50"
-          >
-            Annuler
-          </button>
-          <button
-            type="submit"
-            className="px-4 py-2 text-xs font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800"
-          >
-            Enregistrer les modifications
-          </button>
+        {!isEditing && (
+          <div className="pt-4 border-t border-slate-100 space-y-2 bg-slate-50 rounded-lg p-3.5 border">
+            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createCurrentRent}
+                onChange={(e) => setCreateCurrentRent(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Générer automatiquement l’échéance de loyer de Novembre 2026 (en attente)
+            </label>
+            <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={createWelcomeMessage}
+                onChange={(e) => setCreateWelcomeMessage(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              Ouvrir le fil de messagerie interne avec un message d’accueil
+            </label>
+          </div>
+        )}
+
+        <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-4">
+          <div className="text-xs text-slate-500">
+            Loyer CC :{' '}
+            <strong className="font-mono text-slate-900">
+              {formatCFA(
+                (Number(rentHC) || 0) + (Number(chargesProvision) || 0),
+              )}
+            </strong>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-xs font-medium text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-xs font-medium bg-slate-900 text-white rounded-lg hover:bg-slate-800"
+            >
+              {isEditing
+                ? 'Enregistrer les modifications'
+                : 'Créer l’appartement'}
+            </button>
+          </div>
         </div>
       </form>
     </ModalShell>
