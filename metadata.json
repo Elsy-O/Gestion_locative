@@ -1,0 +1,6 @@
+{
+  "name": "Clé & Gestion — Gestion locative",
+  "description": "Interface de gestion locative pour suivre les revenus, charges et documents locataires de deux appartements.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
